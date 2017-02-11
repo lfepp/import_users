@@ -7,13 +7,15 @@ require 'csv'
 require 'optparse'
 
 class PagerDutyAgent
-  attr_reader :requester_email
   attr_reader :token
+  attr_reader :requester_email
+  attr_reader :create_teams
   attr_reader :connection
 
-  def initialize(token, requester_email)
+  def initialize(token, requester_email, create_teams)
     @token = token
     @requester_email = requester_email
+    @create_teams = create_teams
     @connection = Faraday.new(:url => "https://api.pagerduty.com",
                               :ssl => {:verify => true}) do |c|
       c.request  :url_encoded
@@ -43,7 +45,7 @@ class PagerDutyAgent
     end
     response = connection.post(path, body_json, headers)
     raise "Error: #{response.body}" unless response.success?
-    JSON.parse(response.body)
+    return JSON.parse(response.body)
   end
 
   def put(path, body = {})
@@ -102,15 +104,20 @@ class PagerDutyAgent
     put("/teams/#{team_id}/users/#{user_id}")
   end
 
+  def add_team(team_name)
+    request_body = {'type': 'team', 'name': team_name}
+    post("/teams", request_body)
+  end
+
   def find_teams_by_name(name)
     get("/teams", :query => name)
   end
 
   def get_team_id(teams, name)
-    return nil if teams.size == 0
     teams.each do |team|
       return team["id"] if team["name"].downcase == name.downcase
     end
+    return nil
   end
 
   def find_user_by_email(email)
@@ -172,7 +179,15 @@ class CSVImporter
       if team_id
         agent.add_user_to_team(team_id, user_id)
       else
-        "Could not find team #{team}"
+        if agent.create_teams
+          puts "Could not find team #{team}, creating a new team..."
+          r = agent.add_team(team)
+          team_id = r['team']['id']
+          puts "Created team #{team} with ID #{team_id}, adding user to team..."
+          agent.add_user_to_team(team_id, user_id)
+        else
+          puts "Could not find team #{team}, skipping..."
+        end
       end
     end
 
@@ -220,8 +235,11 @@ OptionParser.new do |opts|
   opts.on('-f', '--csv-path [String]', 'Path to CSV file') do |f|
     options[:csv_path] = f
   end
+  opts.on('-t', '--[no-]create-teams', 'Auto-provision teams that do not already exist') do |t|
+    options[:create_teams] = t
+  end
 end.parse!
 
-agent = PagerDutyAgent.new(options[:access_token], options[:requester_email])
+agent = PagerDutyAgent.new(options[:access_token], options[:requester_email], options[:create_teams])
 
 CSVImporter.new(agent, options[:csv_path]).import
