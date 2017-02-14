@@ -105,7 +105,7 @@ class PagerDutyAgent
   end
 
   def add_team(team_name)
-    request_body = {'type': 'team', 'name': team_name}
+    request_body = {'type' => 'team', 'name' => team_name}
     post("/teams", request_body)
   end
 
